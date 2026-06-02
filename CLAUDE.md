@@ -43,6 +43,7 @@ Runs once after `getUserMedia` succeeds. Applies `exposureMode/whiteBalanceMode:
 - `visibilitychange` cancels the RAF when tab hidden and restarts the appropriate loop on resume. Don't add a new render loop without wiring it into this handler.
 - `resize`/`orientationchange` is debounced and re-runs `startSensorMode()` so the centered message re-flows.
 - `capturing` flag gates the shutter and suppresses the preview loop during accumulation — preserve this guard if changing long-exposure flow.
+- `setMode` is `async` (awaits `startSensorMode`). Awaiting it matters when chaining mode changes programmatically — fire-and-forget is fine for user clicks.
 
 ## Editing Rules Specific to This Repo
 
@@ -50,3 +51,21 @@ Runs once after `getUserMedia` succeeds. Applies `exposureMode/whiteBalanceMode:
 - Korean UI strings — match the existing tone (e.g., "감도", "장노출 촬영 중", "하드웨어 깊이 센서를 지원하지 않습니다"). Don't translate to English.
 - Browser-only `getImageData` work runs every frame; keep the inner loop allocation-free (reuse buffers, `| 0` truncation, no `Math.floor` in hot path).
 - Any new visual stack must respect: **camera auto-exposure + software gain + soft tone-map**, in that order. Adding a fourth multiplicative stage will re-create the clipping regression.
+- When changing the gain slider's default `value="…"`, also update the hardcoded `<span id="gainVal">×N.N</span>` text so static views (JS-disabled, server-rendered snapshots) stay consistent. JS overwrites it on load, but the inline value is the visible default everywhere else.
+
+## Ops snippets
+
+```bash
+# Syntax-check the inline script block
+awk '/<script>/{f=1;next}/<\/script>/{f=0}f' index.html > /tmp/nv.js && node --check /tmp/nv.js
+
+# Pages build state (auth via Windows Credential Manager, no gh login needed)
+TOKEN=$(printf "protocol=https\nhost=github.com\n\n" | git credential fill | grep ^password | cut -d= -f2-)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/kiuza1004/NightVision/pages/builds/latest \
+  | python -c "import sys,json;d=json.load(sys.stdin);print(d.get('status'),d.get('commit','')[:7])"
+
+# Wait until Pages serves 200
+until curl -s -o /dev/null -w "%{http_code}" https://kiuza1004.github.io/NightVision/ \
+  | grep -q ^200; do sleep 8; done
+```
