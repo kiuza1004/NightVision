@@ -193,7 +193,7 @@
       <canvas id="canvas"></canvas>
       <div class="settings-bar hidden" id="settingsBar">
         <span class="gain-label">감도</span>
-        <input class="gain-slider" id="gain" type="range" min="1" max="8" step="0.1" value="2" />
+        <input class="gain-slider" id="gain" type="range" min="1" max="8" step="0.1" value="1" />
         <span class="gain-value" id="gainVal">×2.0</span>
       </div>
       <div class="cap-hint hidden" id="capHint"></div>
@@ -331,27 +331,17 @@
         if (Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('continuous')) {
           constraint.whiteBalanceMode = 'continuous';
         }
+        // Leave exposureCompensation at 0 (camera auto). Slider controls software gain.
+        // Forcing EV+max stacks with software gain and bleaches normal scenes.
         if (caps.exposureCompensation && typeof caps.exposureCompensation.max === 'number') {
-          constraint.exposureCompensation = caps.exposureCompensation.max;
-          notes.push('EV+' + caps.exposureCompensation.max);
-        }
-        if (caps.iso && typeof caps.iso.max === 'number') {
-          // Only force ISO if manual exposure is possible — otherwise it may be ignored
-          if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes('manual')) {
-            constraint.exposureMode = 'manual';
-            constraint.iso = caps.iso.max;
-            if (caps.exposureTime && typeof caps.exposureTime.max === 'number') {
-              constraint.exposureTime = Math.min(caps.exposureTime.max, 33333); // cap at ~30fps worth
-            }
-            notes.push('ISO' + caps.iso.max);
-          }
+          notes.push('EV±' + caps.exposureCompensation.max + ' 가용');
         }
         if (Object.keys(constraint).length === 0) {
           showCapHint('노출 제어 미지원 (감도 슬라이더로 조정)', 4500);
           return;
         }
         await track.applyConstraints({ advanced: [constraint] });
-        if (notes.length) showCapHint('카메라 노출 부스트: ' + notes.join(' · '), 4500);
+        showCapHint('자동 노출 · ' + (notes.join(' · ') || '연속 모드'), 4500);
       } catch (e) {
         console.warn('exposure boost failed:', e);
       }
@@ -388,20 +378,23 @@
         return;
       }
       const w = canvas.width, h = canvas.height;
-      const cssBoost = Math.min(4.0, 1.0 + gain * 0.5); // 1.5 .. 5.0
       ctx.save();
-      ctx.filter = `brightness(${cssBoost.toFixed(2)}) contrast(1.35) saturate(0)`;
+      ctx.filter = 'saturate(0)'; // grayscale only; brightness handled per-pixel
       drawVideoCover(video, ctx, w, h);
       ctx.restore();
 
       try {
         const img = ctx.getImageData(0, 0, w, h);
         const d = img.data;
-        const pixelGain = 1.35 * gain;
-        const offset = 8 * gain;
+        const pixelGain = 1.6 * gain;
+        const offset = 4 * gain;
+        // Soft-knee tonemap constant: smaller knee -> brighter mids, slower top
+        const knee = 100;
         for (let i = 0; i < d.length; i += 4) {
           const lum = d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114;
-          const boost = Math.min(255, lum * pixelGain + offset);
+          const raw = lum * pixelGain + offset;
+          // Reinhard-style: never clips, gives mid-range lift + highlight roll-off
+          const boost = (255 * raw) / (raw + knee);
           d[i]   = (boost * 0.10) | 0;
           d[i+1] = boost | 0;
           d[i+2] = (boost * 0.18) | 0;
